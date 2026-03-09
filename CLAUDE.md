@@ -1,6 +1,13 @@
-# AGENTS.md - AI Agent Development Guide for tap-eia
+# CLAUDE.md - AI Agent Development Guide for tap-eia
 
 This document provides guidance for AI coding agents and developers working on this Singer tap.
+
+## Rules
+
+- **Never guess.** If you don't know something, say "I don't know." It is better to fail or admit uncertainty than to produce something wrong.
+- **Use official documentation.** Always verify against the EIA API docs (https://www.eia.gov/opendata/documentation.php) or the live API. Do not rely on prompt.md or other informal notes as a source of truth.
+- **Correctness over completeness.** Getting it right is the most important thing. It's ok to not know something. It's ok to fail. It's not ok to do something wrong.
+- **Reference taps for patterns.** Use sibling repos (`../tap-fred`, `../tap-fmp`, `../tap-massive`, `../tap-yfinance`) as structural references for Meltano/Singer best practices.
 
 ## Project Overview
 
@@ -18,8 +25,11 @@ This tap follows the Singer specification and uses the Meltano Singer SDK to ext
 
 1. **Tap Class** (`tap_eia/tap.py`): Main entry point, defines streams and configuration
 1. **Client** (`tap_eia/client.py`): Handles API communication and authentication
-1. **Streams** (`tap_eia/streams.py`): Define data streams and their schemas
-   ## Development Guidelines for AI Agents
+1. **Streams** (`tap_eia/streams/`): Stream definitions split by concern:
+   - `data_streams.py` — `DataStream` (main data extraction, partitioned by route_path + frequency)
+   - `route_streams.py` — `RoutesStream` and `RouteMetadataStream` (API route discovery)
+
+## Development Guidelines for AI Agents
 
 ### Understanding Singer Concepts
 
@@ -35,7 +45,7 @@ Before making changes, ensure you understand these Singer concepts:
 
 #### Adding a New Stream
 
-1. Define stream class in `tap_eia/streams.py`
+1. Define stream class in `tap_eia/streams/`
 1. Set `name`, `path`, `primary_keys`, and `replication_key` (set this to `None` if not applicable)
 1. Define schema using `PropertiesList` or JSON Schema
 1. Register stream in the tap's `discover_streams()` method
@@ -305,16 +315,65 @@ Any properties with `secret=True` should be marked with `sensitive: true` in `me
 tap-eia/
 ├── tap_eia/
 │   ├── __init__.py
-│   ├── tap.py          # Main tap class
-│   ├── client.py       # API client
-│   └── streams.py      # Stream definitions
+│   ├── tap.py              # Main tap class (config, route discovery, caching)
+│   ├── client.py           # EIAStream base class (rate limiting, retries, post_process)
+│   ├── helpers.py          # Utility functions (snake_case, surrogate keys)
+│   └── streams/
+│       ├── __init__.py     # Re-exports all stream classes
+│       ├── data_streams.py # DataStream (main data extraction)
+│       └── route_streams.py # RoutesStream, RouteMetadataStream
 ├── tests/
 │   ├── __init__.py
 │   └── test_core.py
-├── config.json         # Example configuration
-├── pyproject.toml      # Dependencies and metadata
-└── README.md          # User documentation
+├── meltano.yml             # Meltano project config (keep in sync with tap.py)
+├── .env.example            # Environment variable template
+├── pyproject.toml          # Dependencies and metadata
+└── README.md               # User documentation
 ```
+
+## EIA API v2 Reference
+
+Source: official EIA documentation (eia.gov/opendata/documentation.php) and the EIA Open Data page (eia.gov/opendata/).
+
+### API Design
+
+- The API is **self-describing**: query a parent route to discover its child routes via `response.routes[]`.
+- Routes form a **tree hierarchy** (can be 3+ levels deep). Leaf routes have data; non-leaf routes have children.
+- Data is accessed via `GET /v2/{route_path}/data/` with required `data[]` parameter for measure columns.
+- Pagination: `offset` (0-based start), `length` (max 5000 for JSON), `response.total` (returned as string).
+- Facets are route-specific filter dimensions (e.g., state, fuel type, sector).
+- Frequencies vary per route (e.g., monthly, annual, quarterly, hourly).
+- EIA can return errors with HTTP 200 in format: `{"error": "...", "code": 400}`.
+- `response.total` is a **string**, not an int (e.g., `"251"`).
+- Missing values are returned as `"Not Available"`, `"W"`, `"--"`, `"NA"`, or empty string.
+- API keys auto-suspend if rate thresholds are exceeded.
+- `DEMO_KEY` exists but is heavily rate-limited (429s are common).
+
+### Known Top-Level Routes (from eia.gov/opendata/)
+
+| Route | Description |
+|-------|-------------|
+| `electricity` | Sales, revenue, prices, power plants, generation, trade, demand, emissions |
+| `natural-gas` | Production, prices, consumption, reserves, imports/exports, storage |
+| `petroleum` | Crude reserves/production, prices, consumption, refining, imports/exports, stocks |
+| `coal` | Production, shipments, consumption, exports/imports, prices, reserves |
+| `crude-oil-imports` | Crude oil import data |
+| `densified-biomass` | Wood pellet production, capacity, sales, exports |
+| `nuclear-outages` | Facility and generator nuclear outage data |
+| `total-energy` | Aggregate energy data |
+| `seds` | State Energy Data System |
+| `steo` | Short-Term Energy Outlook |
+| `aeo` | Annual Energy Outlook |
+| `ieo` | International Energy Outlook |
+| `international` | International energy data |
+| `co2-emissions` | CO2 emissions aggregates |
+
+**Note:** The exact API route paths have not been fully verified against the live API (DEMO_KEY rate-limited). The tap discovers actual routes dynamically at runtime via recursive tree walk, so hardcoded lists are not authoritative.
+
+### SDK Gotchas
+
+- In SDK >= 0.47.0, `post_process()` is called automatically by `_sync_records()`. Never call it manually from `get_records()`.
+- `--config` expects a file path, not inline JSON.
 
 ## Additional Resources
 
