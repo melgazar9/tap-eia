@@ -1,13 +1,13 @@
-send_anonymous_usage_stats: true
+version: 1
+send_anonymous_usage_stats: false
 project_id: "tap-eia"
 default_environment: test
-requires_meltano: ">=4.0"
 environments:
 - name: test
 plugins:
   extractors:
-  - name: "tap-eia"
-    namespace: "tap_eia"
+  - name: tap-eia
+    namespace: tap_eia
     pip_url: -e .
     capabilities:
     - state
@@ -15,32 +15,52 @@ plugins:
     - discover
     - about
     - stream-maps
-    - structured-logging
-
-    # TODO: Declare settings and their types here:
     settings:
-    - name: username
-      label: Username
-      description: The username to use for authentication
-
-    - name: password
+    - name: api_key
       kind: password
-      label: Password
-      description: The password to use for authentication
       sensitive: true
-
+      description: EIA API key (register at https://www.eia.gov/opendata/)
+    - name: api_url
+      kind: string
+      value: https://api.eia.gov/v2
+      description: Base URL for the EIA API v2
+    - name: routes
+      kind: array
+      description: Top-level routes to pull. ["*"] = all.
     - name: start_date
       kind: date_iso8601
-      label: Start Date
-      description: Initial date to start extracting data from
-
-    # TODO: Declare required settings here:
-    settings_group_validation:
-    - [username, password]
-
-    # TODO: Declare default configuration values here:
+      description: Earliest data period to pull
+    - name: end_date
+      kind: date_iso8601
+      description: Latest data period to pull
+    - name: frequencies
+      kind: array
+      description: Which frequencies to pull per endpoint. ["*"] = all.
+    - name: max_requests_per_minute
+      kind: integer
+      value: 30
+      description: Maximum API requests per minute
+    - name: min_throttle_seconds
+      kind: number
+      value: 1.0
+      description: Minimum seconds between consecutive requests
+    - name: page_size
+      kind: integer
+      value: 5000
+      description: Records per API page (max 5000)
+    - name: strict_mode
+      kind: boolean
+      value: false
+      description: If true, fail on any API error. If false, log and skip.
+    select:
+    - routes.*
+    - route_metadata.*
+    - data.*
     config:
-      start_date: 6 months ago
+      api_key: $EIA_API_KEY
+      routes: ["*"]
+      frequencies: ["*"]
+      page_size: 5000
 
   loaders:
   - name: target-jsonl
