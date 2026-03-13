@@ -15,7 +15,10 @@ import requests
 from singer_sdk.helpers.types import Context
 from singer_sdk.streams import RESTStream
 
-from tap_eia.helpers import clean_json_keys, generate_surrogate_key
+from tap_eia.helpers import MEASURE_FIELDS, clean_json_keys, generate_surrogate_key
+
+if t.TYPE_CHECKING:
+    from tap_eia.tap import TapEIA
 
 
 class EIAStream(RESTStream, ABC):
@@ -31,8 +34,9 @@ class EIAStream(RESTStream, ABC):
     records_jsonpath = "$.response.data[*]"
     rest_method = "GET"
     _add_surrogate_key = False
+    _tap: TapEIA
 
-    def __init__(self, tap) -> None:
+    def __init__(self, tap: TapEIA) -> None:
         super().__init__(tap)
         self._max_requests_per_minute = int(
             self.config.get("max_requests_per_minute", 30)
@@ -273,26 +277,16 @@ class EIAStream(RESTStream, ABC):
         return {"api_key": self.config["api_key"]}
 
     def post_process(self, row: dict, context: Context | None = None) -> dict:
-        """Transform raw data: snake_case keys, type conversions, surrogate key.
+        """Transform raw data: snake_case keys, surrogate key.
 
         NOTE: In SDK >=0.47.0, this is called automatically by _sync_records()
         on every record yielded from get_records(). Do NOT call manually.
         """
         row = clean_json_keys(row)
 
-        # EIA returns numeric values as strings, and "Not Available" for missing data.
-        # Convert to float or None per the schema's NumberType.
-        if "value" in row:
-            raw = row["value"]
-            if raw is None or (isinstance(raw, str) and raw.strip().lower() in {"not available", "w", "--", "na", ""}):
-                row["value"] = None
-            else:
-                try:
-                    row["value"] = float(raw)
-                except (ValueError, TypeError):
-                    row["value"] = None
-
         if self._add_surrogate_key:
-            row["surrogate_key"] = generate_surrogate_key(row)
+            row["surrogate_key"] = generate_surrogate_key(
+                row, exclude_fields=MEASURE_FIELDS
+            )
 
         return row

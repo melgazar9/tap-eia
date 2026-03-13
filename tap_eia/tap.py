@@ -27,6 +27,16 @@ class TapEIA(Tap):
             description="EIA API key (register at https://www.eia.gov/opendata/)",
         ),
         th.Property(
+            "api_keys",
+            th.ArrayType(th.StringType),
+            secret=True,
+            description=(
+                "Additional API keys for round-robin rotation. "
+                "Spreads requests across keys to increase throughput. "
+                "Note: EIA also throttles by IP, so 2-3 keys from one IP is practical."
+            ),
+        ),
+        th.Property(
             "api_url",
             th.StringType,
             default="https://api.eia.gov/v2",
@@ -164,7 +174,7 @@ class TapEIA(Tap):
 
         all_routes: list[dict] = []
         for seed in seeds:
-            self._walk_route_tree(seed["route_path"], seed, all_routes)
+            self._walk_route_tree(str(seed["route_path"]), seed, all_routes)
         return all_routes
 
     def _fetch_route_children(self, parent_path: str) -> list[dict]:
@@ -281,7 +291,7 @@ class TapEIA(Tap):
         configured_frequencies = self.config.get("frequencies", ["*"])
         leaf_routes = [r for r in self.get_cached_routes() if r.get("is_leaf")]
 
-        partitions = []
+        partitions: list[dict] = []
         for route_info in leaf_routes:
             route_path = route_info["route_path"]
             metadata = self.get_cached_route_metadata(route_path)
